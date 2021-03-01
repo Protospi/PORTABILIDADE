@@ -1,0 +1,368 @@
+---
+title: "Trabalho de Grafos"
+author: "Pedro Loes"
+date: "02/02/2020"
+output: pdf_document
+header-includes:
+    - \usepackage{sectsty}
+    - \allsectionsfont{\color{red}}
+---
+
+# Portabilidade de Estudantes
+
+* Resumo: 
+    * Modelagem da rede de portabilidade de estudantes usando modelos lineares generalizados da familia binomial.
+    * O objetivo da modelagem foi investigar por meio da regressao logistica se a portabilidade poderia ser explicada pelos atributos da rede de estudantes da plataforma DataCamp. 
+
+# Carrega Pacotes
+
+```{r message=F, warning=F, error=F}
+
+# Carrega Pacotes
+library(igraph)
+library(tidyverse)
+
+```
+
+# Carrega Dados de Estudantes e Gera Rede
+
+```{r warning=F, message=F, error=F}
+
+# Carrega dados
+load("StudentEdgelist.RData")
+load("StudentCustomers.RData")
+load("StudentNetwork.RData")
+
+# Constroi rede
+network <- graph_from_data_frame(edgeList, directed = FALSE)
+
+```
+
+# Inspeciona e Desenha rede
+
+```{r warning=F, message=F, error=F}
+
+# Inspeciona dados
+head(customers)
+
+# Tabela de numero de churns
+table(customers$churn)
+
+# Adiciona atributo de churn a rede
+V(network)$churn <- customers$churn
+
+# visualiza rede
+plot(network, vertex.label = NA, edge.label = NA,
+     edge.color = 'black', vertex.size = 2)
+
+```
+
+# Rede com Cores
+
+```{r warning=F, message=F, error=F}
+
+# Adiciona cor ao vertice de churn
+V(network)$color <- V(network)$churn
+
+# Muda cor de churners
+V(network)$color <- gsub("1", "red", V(network)$color) 
+V(network)$color <- gsub("0", "white", V(network)$color)
+
+# Desenha grafico
+plot(network, vertex.label = NA, edge.label = NA,
+     edge.color = "black", vertex.size = 2)
+
+```
+
+# Cliente que Optaram pela Portabilidade
+
+```{r warning=F, message=F, error=F}
+
+# Gera subgrafo
+churnerNetwork <- induced_subgraph(network, 
+                                   v = V(network)[which(V(network)$churn == 1)])
+
+# Imprime grafico 
+plot(churnerNetwork, vertex.label = NA, vertex.size = 2)
+
+```
+
+# Vizinhanca de Clientes que Optaram pela Portabilidade
+
+```{r warning=F, message=F, error=F}
+
+# Declara ids de churns
+churn_ids <- as.vector(customers[customers$churn == 1,]$id)
+
+# Declara numero de ids
+numchur_ids <- as.vector(customers[customers$churn == 0,]$id)
+
+# Define vizinhanca
+ChurnNeighbors <- edgeList %>% 
+                    mutate(from = as.numeric(from)) %>%
+                    arrange(from) %>%
+                    mutate(churned = ifelse(to %in% churn_ids, 1, 0),
+                           nonchurned = ifelse(!to %in% churn_ids, 1, 0)) %>%
+                    group_by(from) %>%
+                    summarise(n_churn = sum(churned),
+                              n_nonchurn = sum(nonchurned))
+
+# Probabilidade de churn
+churnProb <- ChurnNeighbors$n_churn / (ChurnNeighbors$n_churn +
+                                       ChurnNeighbors$n_nonchurn)
+
+# Encontra clientes com maior probabilidade de optar pela portabilidade
+mostLikelyChurners <- which(churnProb == max(churnProb))
+
+# Extrai ids de clientes com maior probabilidade de portabilidade
+customers$id[mostLikelyChurners]
+
+```
+
+# Atributos do Modelo
+
+```{r warning=F, message=F, error=F}
+
+# Extrai graus
+V(network)$degree <- degree(network, normalized=TRUE)
+
+# Extrai graus de ordem 2
+degree2 <- neighborhood.size(network, 2)
+
+# Normaliza
+V(network)$degree2 <- degree2 / (length(V(network)) - 1)
+
+# Extrai numero de triangulos
+V(network)$triangles <- count_triangles(network)
+
+# Extrai mediacao
+V(network)$betweenness <- betweenness(network, normalized=TRUE)
+
+# Extrai proximidade
+V(network)$closeness <- closeness(network, normalized=TRUE)
+
+# Extrai autovalor de centralidade
+V(network)$eigenCentrality <- eigen_centrality(network, scale = TRUE)$vector
+
+# Extrai transitividade local
+V(network)$transitivity <- transitivity(network, type="local", isolates='zero')
+
+# Calcula transitividade
+transitivity(network)
+
+```
+
+# Matrizes de Adjacencias
+
+```{r warning=F, message=F, error=F}
+
+# Extrai matriz de adjacencias
+AdjacencyMatrix <- as_adjacency_matrix(network)
+
+# Calcula matriz de segunda ordem
+SecondOrderMatrix_adj <- AdjacencyMatrix %*% AdjacencyMatrix
+
+# Ajusta matriz de segunda ordem
+SecondOrderMatrix <- ((SecondOrderMatrix_adj) > 0) + 0
+diag(SecondOrderMatrix) <- 0
+
+# Inspeciona matriz
+SecondOrderMatrix[1:10, 1:10]
+
+```
+
+# Atributos Matriz de Adjacencias de Primeira Ordem
+
+```{r warning=F, message=F, error=F}
+
+# Calcula churn de vertices
+V(network)$Churn <- customers$churn
+
+# Calcula numero de vizinhos de churn
+V(network)$ChurnNeighbors <- as.vector(AdjacencyMatrix %*% V(network)$Churn)
+
+# Calcula numero de nao churns
+V(network)$NonChurnNeighbors <- as.vector(AdjacencyMatrix %*% (1 -
+                                                               V(network)$Churn))
+
+# Calcula probabilidade reacional de vizinhos
+V(network)$RelationalNeighbor <- as.vector(V(network)$ChurnNeighbors / 
+                                             (V(network)$ChurnNeighbors +
+                                                V(network)$NonChurnNeighbors))
+
+```
+
+# Atributos Matriz de Adjacencias de Segunda Ordem
+
+```{r warning=F, message=F, error=F}
+
+# Calcula numero de churners
+V(network)$ChurnNeighbors2 <- as.vector(SecondOrderMatrix %*% V(network)$Churn)
+
+# Calcula numero de nao churners
+V(network)$NonChurnNeighbors2 <- as.vector(SecondOrderMatrix %*% (1 - 
+                                                                  V(network)$Churn))
+
+# Calcula probabilidade de churn
+V(network)$RelationalNeighbor2 <- as.vector(V(network)$ChurnNeighbors2 / 
+                                              (V(network)$ChurnNeighbors2 +
+                                                 V(network)$NonChurnNeighbors2))
+
+```
+
+# Media de Atributos
+
+```{r warning=F, message=F, error=F}
+
+# Extrai grau medio
+V(network)$averageDegree <- 
+  as.vector(AdjacencyMatrix %*% V(network)$degree) / degree(network)
+
+# Extrai triangulos medios
+V(network)$averageTriangles <- 
+  as.vector(AdjacencyMatrix %*% V(network)$triangles) / degree(network)
+
+# Extrai trnasitividade media    
+V(network)$averageTransitivity<-
+  as.vector(AdjacencyMatrix %*% V(network)$transitivity) / degree(network)
+
+# Extrai mediacao media    
+V(network)$averageBetweenness <- 
+  as.vector(AdjacencyMatrix %*% V(network)$betweenness) / degree(network)
+
+```
+
+# Clientes que Optaram pela Portabilidade
+
+```{r warning=F, message=F, error=F}
+
+# Extrai o dataset
+studentnetworkdata_full <- igraph::as_data_frame(network, what = "vertices")
+
+# Remove clientes que ja sairam
+studentnetworkdata_filtered <- studentnetworkdata_full[-which(studentnetworkdata_full$Churn == 1), ]
+
+# Remove colunas indesejadas
+studentnetworkdata <- studentnetworkdata_filtered[, -c(1, 2, 9)]
+
+# Inspeciona atributos
+summary(studentnetworkdata$RelationalNeighbor2)
+
+```
+
+# Atributos Correlacionados 
+
+```{r warning=F, message=F, error=F}
+
+# Carrega pacote
+library(corrplot)
+
+# Gera matriz de correlacoes
+M <- cor(studentnetworkdata[, -c(3)])
+
+# Grafico da matriz
+corrplot(M, method = "circle")
+
+# Declara atributos correlacionados
+remover <- c(5,16)
+
+# Remove atributos correlacionados
+studentnetworkdata_no_corrs <- studentnetworkdata[, -remover]
+
+```
+
+# Separa Treino e Teste
+
+```{r warning=F, message=F, error=F}
+
+# Adiciona vetor de Futuro vetor
+studentnetworkdata <- studentnetworkdata_full
+
+# Indica semente
+set.seed(7)
+
+# Gera indice do vetor
+index_train <- sample(1:nrow(studentnetworkdata), 2 / 3 * nrow(studentnetworkdata))
+
+# Gera banco de treinamento
+treino <- studentnetworkdata[index_train, ]
+
+# Gera banco de teste
+teste <- studentnetworkdata[-index_train, ]
+
+```
+
+# Primeiro Modelo
+
+```{r warning=F, message=F, error=F}
+
+# Constroi modelo 3
+modelo_1 <- glm(Churn ~ degree  + triangles + betweenness +
+                closeness + transitivity,
+                family = "binomial",
+                data = treino[, -c(1,2,3)])
+
+```
+
+# Segundo Modelo
+
+```{r warning=F, message=F, error=F}
+
+# Constroi modelo 2
+modelo_2 <- glm(Churn ~ ChurnNeighbors +
+                RelationalNeighbor +
+                ChurnNeighbors2 +
+                RelationalNeighbor2 + 
+                averageDegree +
+                averageTriangles +
+                averageTransitivity +
+                averageBetweenness, 
+                family = "binomial",
+                data = treino[, -c(1,2,3)])
+
+```
+
+# Terceiro Modelo
+
+```{r warning=F, message=F, error=F}
+
+# Constroi modelo 3
+modelo_3 <- glm(Churn ~ ., 
+                family = "binomial",
+                data = treino[, -c(1,2,3)])
+
+```
+
+# Avalia Modelos
+
+```{r warning=F, message=F, error=F}
+
+# Carrega Pacote
+library(pROC)
+
+# Predicao do 1 modelo
+preditos_1 <- predict(modelo_1,
+                      newdata = teste[, -c(1,2,3)],
+                      type = "response")
+
+# Calcula auc
+auc(teste$churn, preditos_1)
+
+# Predicao do segundo Modelo
+preditos_2 <- predict(modelo_2,
+                      newdata = teste[, -c(1,2,3)],
+                      type = "response")
+
+# Calcula auc
+auc(teste$churn, preditos_2)
+
+# Predicao do terceiro Modelo
+preditos_3 <- predict(modelo_3,
+                      newdata = teste[, -c(1,2,3)],
+                      type = "response")
+
+# Calculate auc
+auc(teste$churn, preditos_3)
+
+```
+
